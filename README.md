@@ -12,7 +12,7 @@ Put the project on the local disk:
 
 ```bash
 mkdir -p ~/Developer
-git clone https://github.com/LewisAGI/shelf.git ~/Developer/shelf
+git clone https://github.com/Lewis-AI-Collab/shelf.git ~/Developer/shelf
 cd ~/Developer/shelf
 ```
 
@@ -39,7 +39,7 @@ First-run iOS build: open `ios/Runner.xcworkspace` in Xcode if you need to pick 
 Practical path for Lewis, Madara, or anyone cloning the public repo (including a brother-in-law who just wants the APK). There is **no Play Store listing**. Personal use = debug/release APK, emulator, or later a physical phone.
 
 ```bash
-git clone https://github.com/LewisAGI/shelf.git
+git clone https://github.com/Lewis-AI-Collab/shelf.git
 cd shelf
 flutter pub get
 ```
