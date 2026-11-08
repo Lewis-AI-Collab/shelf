@@ -7,7 +7,7 @@ Lewis does not have a physical Android phone in hand yet. Success for this drop 
 ## 1. Clone
 
 ```bash
-git clone https://github.com/LewisAGI/shelf.git
+git clone https://github.com/Lewis-AI-Collab/shelf.git
 cd shelf
 ```
 
