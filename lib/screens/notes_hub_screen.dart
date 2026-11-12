@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -17,11 +18,7 @@ import 'reader_screen.dart';
 enum _NoteAction { open, copyHighlight, copyNote, edit, delete }
 
 class NotesHubScreen extends StatefulWidget {
-  const NotesHubScreen({
-    super.key,
-    required this.store,
-    this.searchController,
-  });
+  const NotesHubScreen({super.key, required this.store, this.searchController});
 
   final ShelfStore store;
   final TextEditingController? searchController;
@@ -77,10 +74,12 @@ class _NotesHubScreenState extends State<NotesHubScreen> {
             final groups = <String, List<Note>>{};
             final order = <String>[];
             for (final note in notes) {
-              groups.putIfAbsent(note.documentId, () {
-                order.add(note.documentId);
-                return <Note>[];
-              }).add(note);
+              groups
+                  .putIfAbsent(note.documentId, () {
+                    order.add(note.documentId);
+                    return <Note>[];
+                  })
+                  .add(note);
             }
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -125,7 +124,9 @@ class _NotesHubScreenState extends State<NotesHubScreen> {
                             filled: true,
                             fillColor: const Color(0xFFF5F5F4),
                             isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                            contentPadding: const EdgeInsets.symmetric(
+                              vertical: 12,
+                            ),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(24),
                               borderSide: BorderSide.none,
@@ -159,10 +160,7 @@ class _NotesHubScreenState extends State<NotesHubScreen> {
                           });
                         },
                         itemBuilder: (context) => [
-                          const PopupMenuItem(
-                            value: 'all',
-                            child: Text('All'),
-                          ),
+                          const PopupMenuItem(value: 'all', child: Text('All')),
                           for (final label in widget.store.labels)
                             PopupMenuItem(
                               value: label.id,
@@ -200,7 +198,9 @@ class _NotesHubScreenState extends State<NotesHubScreen> {
                               Padding(
                                 padding: const EdgeInsets.fromLTRB(4, 16, 4, 6),
                                 child: Text(
-                                  widget.store.documentById(documentId)?.title ??
+                                  widget.store
+                                          .documentById(documentId)
+                                          ?.title ??
                                       'Missing PDF',
                                   style: const TextStyle(
                                     fontSize: 17,
@@ -310,7 +310,9 @@ class _NoteBlock extends StatelessWidget {
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('Delete note?'),
-            content: const Text('This comment will be removed from this phone.'),
+            content: const Text(
+              'This comment will be removed from this phone.',
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
@@ -350,9 +352,7 @@ class _NoteBlock extends StatelessWidget {
             Container(
               key: Key('note-accent-${note.id}'),
               decoration: BoxDecoration(
-                border: Border(
-                  left: BorderSide(color: label.color, width: 3),
-                ),
+                border: Border(left: BorderSide(color: label.color, width: 3)),
               ),
               padding: const EdgeInsets.only(left: 12),
               child: Column(
@@ -400,39 +400,44 @@ class _NoteBlock extends StatelessWidget {
                   tooltip: 'Ask AI',
                   visualDensity: VisualDensity.compact,
                   onPressed: () {
-                    AskAboutNoteButton.choose(
-                      context,
-                      noteText: note.text,
-                      selectedText: note.selection?.text,
-                      documentTitle: document?.title,
-                      document: document,
-                      page: note.page,
-                      x: note.x,
-                      y: note.y,
-                      colorLabelId: note.colorLabelId,
-                      note: note,
-                      loadSections: document == null
-                          ? null
-                          : () => PdfOutlineSource.loadForDocument(
-                              document,
-                              store.pdfPath,
-                            ),
-                      offerPdf: document != null,
-                      pdfFileName: document == null
-                          ? null
-                          : NotesExport.fileNameOf(document),
-                      loadPdf: document == null
-                          ? null
-                          : () async {
-                              try {
-                                final path = await store.pdfPath(document);
-                                return await File(path).readAsBytes();
-                              } on Object {
-                                return null;
-                              }
-                            },
-                      labels: store.labels,
-                      labelById: store.labelById,
+                    unawaited(
+                      store.withDocumentActivity(
+                        note.documentId,
+                        () => AskAboutNoteButton.choose(
+                          context,
+                          noteText: note.text,
+                          selectedText: note.selection?.text,
+                          documentTitle: document?.title,
+                          document: document,
+                          page: note.page,
+                          x: note.x,
+                          y: note.y,
+                          colorLabelId: note.colorLabelId,
+                          note: note,
+                          loadSections: document == null
+                              ? null
+                              : () => PdfOutlineSource.loadForDocument(
+                                  document,
+                                  store.pdfPath,
+                                ),
+                          offerPdf: document != null,
+                          pdfFileName: document == null
+                              ? null
+                              : NotesExport.fileNameOf(document),
+                          loadPdf: document == null
+                              ? null
+                              : () async {
+                                  try {
+                                    final path = await store.pdfPath(document);
+                                    return await File(path).readAsBytes();
+                                  } on Object {
+                                    return null;
+                                  }
+                                },
+                          labels: store.labels,
+                          labelById: store.labelById,
+                        ),
+                      ),
                     );
                   },
                   icon: const Icon(Icons.auto_awesome_outlined, size: 20),

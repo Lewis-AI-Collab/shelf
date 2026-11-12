@@ -19,11 +19,7 @@ import '../widgets/shelf_menu_label.dart';
 import 'reader_screen.dart';
 
 class LibraryScreen extends StatelessWidget {
-  const LibraryScreen({
-    super.key,
-    required this.store,
-    this.onViewAllComments,
-  });
+  const LibraryScreen({super.key, required this.store, this.onViewAllComments});
 
   final ShelfStore store;
   final ValueChanged<String>? onViewAllComments;
@@ -34,9 +30,8 @@ class LibraryScreen extends StatelessWidget {
       return;
     }
     if (store.lastError != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(store.lastError!)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(store.lastError!)));
     }
     if (document != null) {
       await Navigator.of(context).push(
@@ -76,92 +71,145 @@ class LibraryScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _exportComments(
-    BuildContext context,
-    LibraryDocument document,
-  ) async {
-    // Snapshot the ⋮ button before the async outline/file work. iOS share
-    // rejects a zero origin; Android omits origin. This is the menu anchor
-    // (or a safe fallback) when the platform needs one.
-    final origin = ShareOrigin.resolve(context: context);
-    try {
-      final outline = await PdfOutlineSource.loadForDocument(
-        document,
-        store.pdfPath,
-      );
-      if (!context.mounted) {
-        return;
-      }
-      final notes = store.notesForDocument(document.id);
-      final share = await MarkdownPreviewSheet.show(
-        context,
-        fileName: document.title,
-        markdown: NotesExport.previewMarkdown(
-          documentTitle: document.title,
-          notes: notes,
+  Future<void> _exportComments(BuildContext context, LibraryDocument document) {
+    return store.withDocumentActivity(document.id, () async {
+      // Snapshot the ⋮ button before the async outline/file work. iOS share
+      // rejects a zero origin; Android omits origin. This is the menu anchor
+      // (or a safe fallback) when the platform needs one.
+      final origin = ShareOrigin.resolve(context: context);
+      try {
+        final outline = await PdfOutlineSource.loadForDocument(
+          document,
+          store.pdfPath,
+        );
+        if (!context.mounted) {
+          return;
+        }
+        final notes = store.notesForDocument(document.id);
+        final share = await MarkdownPreviewSheet.show(
+          context,
+          fileName: document.title,
+          markdown: NotesExport.previewMarkdown(
+            documentTitle: document.title,
+            notes: notes,
+            labelById: store.labelById,
+            outline: outline,
+          ),
+        );
+        if (!share || !context.mounted) {
+          return;
+        }
+        await exportDocumentComments(
+          document: document,
+          notes: store.notesForDocument(document.id),
           labelById: store.labelById,
           outline: outline,
-        ),
-      );
-      if (!share || !context.mounted) {
-        return;
+          sharePositionOrigin: origin,
+        );
+      } on Object catch (error) {
+        if (!context.mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not export comments: $error')),
+        );
       }
-      await exportDocumentComments(
-        document: document,
-        notes: store.notesForDocument(document.id),
-        labelById: store.labelById,
-        outline: outline,
-        sharePositionOrigin: origin,
-      );
-    } on Object catch (error) {
-      if (!context.mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not export comments: $error')),
-      );
-    }
+    });
   }
 
-  Future<void> _sendToAi(
+  Future<void> _sendToAi(BuildContext context, LibraryDocument document) {
+    return store.withDocumentActivity(document.id, () async {
+      final notes = store.notesForDocument(document.id);
+      if (notes.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This book has no comments yet.')),
+        );
+        return;
+      }
+      await AskAboutNoteButton.open(
+        context,
+        noteText: 'Notes from ${document.title}',
+        documentTitle: document.title,
+        notesToResolve: notes,
+        labelById: store.labelById,
+        loadSections: () =>
+            PdfOutlineSource.loadForDocument(document, store.pdfPath),
+        offerPdf: true,
+        pdfFileName: '${document.title}.pdf',
+        loadPdf: () async {
+          try {
+            final path = await store.pdfPath(document);
+            return await File(path).readAsBytes();
+          } on Object {
+            return null;
+          }
+        },
+      );
+    });
+  }
+
+  Future<bool> _confirmDelete(
     BuildContext context,
     LibraryDocument document,
   ) async {
-    final notes = store.notesForDocument(document.id);
-    if (notes.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This book has no comments yet.')),
-      );
-      return;
+    if (store.isDocumentBusy(document.id)) {
+      _showDeleteBusy(context);
+      return false;
     }
-    await AskAboutNoteButton.open(
-      context,
-      noteText: 'Notes from ${document.title}',
-      documentTitle: document.title,
-      notesToResolve: notes,
-      labelById: store.labelById,
-      loadSections: () => PdfOutlineSource.loadForDocument(
-        document,
-        store.pdfPath,
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.delete_outline, color: _deleteColor),
+        title: const Text('Delete?'),
+        actions: [
+          TextButton(
+            key: const Key('library-delete-cancel'),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const Key('library-delete-confirm'),
+            style: TextButton.styleFrom(foregroundColor: _deleteColor),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
       ),
-      offerPdf: true,
-      pdfFileName: '${document.title}.pdf',
-      loadPdf: () async {
-        try {
-          final path = await store.pdfPath(document);
-          return await File(path).readAsBytes();
-        } on Object {
-          return null;
-        }
-      },
+    );
+    if (confirmed != true || !context.mounted) {
+      return false;
+    }
+    if (store.isDocumentBusy(document.id)) {
+      _showDeleteBusy(context);
+      return false;
+    }
+    return true;
+  }
+
+  void _showDeleteBusy(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        key: Key('library-delete-busy'),
+        content: Text('Export in progress'),
+      ),
     );
   }
 
-  void _onMenu(
+  Future<void> _deleteDocument(
     BuildContext context,
     LibraryDocument document,
-    String value,
-  ) {
+  ) async {
+    final confirmed = await _confirmDelete(context, document);
+    if (!confirmed) {
+      return;
+    }
+    final removed = await store.removeDocument(document);
+    if (!removed && context.mounted) {
+      _showDeleteBusy(context);
+    }
+  }
+
+  void _onMenu(BuildContext context, LibraryDocument document, String value) {
     switch (value) {
       case 'export':
         unawaited(_exportComments(context, document));
@@ -169,6 +217,8 @@ class LibraryScreen extends StatelessWidget {
         unawaited(_sendToAi(context, document));
       case 'view':
         onViewAllComments?.call(document.title);
+      case 'delete':
+        unawaited(_deleteDocument(context, document));
     }
   }
 
@@ -203,16 +253,19 @@ class LibraryScreen extends StatelessWidget {
                   child: GridView.builder(
                     key: const Key('library-grid'),
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: 0.72,
-                    ),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: 0.72,
+                        ),
                     itemCount: store.documents.length,
                     itemBuilder: (context, index) {
                       final document = store.documents[index];
-                      final noteCount = store.notesForDocument(document.id).length;
+                      final noteCount = store
+                          .notesForDocument(document.id)
+                          .length;
                       return Dismissible(
                         key: ValueKey(document.id),
                         direction: DismissDirection.endToStart,
@@ -228,29 +281,11 @@ class LibraryScreen extends StatelessWidget {
                             color: Colors.white,
                           ),
                         ),
-                        confirmDismiss: (_) async {
-                          final confirmed = await showDialog<bool>(
-                            context: context,
-                            builder: (context) => AlertDialog(
-                              title: const Text('Remove from library?'),
-                              content: Text(
-                                '“${document.title}” and its notes will be deleted from this phone.',
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context, false),
-                                  child: const Text('Keep'),
-                                ),
-                                FilledButton(
-                                  onPressed: () => Navigator.pop(context, true),
-                                  child: const Text('Remove'),
-                                ),
-                              ],
-                            ),
-                          );
-                          return confirmed ?? false;
+                        confirmDismiss: (_) =>
+                            _confirmDelete(context, document),
+                        onDismissed: (_) {
+                          unawaited(store.removeDocument(document));
                         },
-                        onDismissed: (_) => store.removeDocument(document),
                         child: _LibraryCoverCard(
                           document: document,
                           noteCount: noteCount,
@@ -298,6 +333,8 @@ class _CoverStyle {
   final Color foreground;
   final Color accent;
 }
+
+const _deleteColor = Color(0xFFB91C1C);
 
 const _covers = <_CoverStyle>[
   _CoverStyle(
@@ -455,6 +492,15 @@ class _LibraryCoverCard extends StatelessWidget {
                       child: ShelfMenuLabel(
                         icon: Icons.sticky_note_2_outlined,
                         label: 'View all comments',
+                      ),
+                    ),
+                    PopupMenuItem(
+                      key: Key('library-card-delete'),
+                      value: 'delete',
+                      child: ShelfMenuLabel(
+                        icon: Icons.delete_outline,
+                        label: 'Delete',
+                        destructive: true,
                       ),
                     ),
                   ],

@@ -19,6 +19,12 @@ import 'note_share_sheet.dart';
 
 typedef PdfBytesLoader = Future<List<int>?> Function();
 
+/// Runs [action] while [documentId] must not be deleted (export / share).
+typedef DocumentActivityGuard = Future<void> Function(
+  String documentId,
+  Future<void> Function() action,
+);
+
 /// Ask AI on an open note: ask a connected provider, or share this note.
 class AskAboutNoteButton extends StatelessWidget {
   const AskAboutNoteButton({
@@ -43,6 +49,7 @@ class AskAboutNoteButton extends StatelessWidget {
     this.labels = const [],
     this.labelById,
     this.loadSections,
+    this.documentActivity,
   });
 
   /// Read at tap time so the composer field is current.
@@ -69,6 +76,7 @@ class AskAboutNoteButton extends StatelessWidget {
   final List<ColorLabel> labels;
   final ColorLabel Function(String id)? labelById;
   final Future<List<PdfSection>> Function()? loadSections;
+  final DocumentActivityGuard? documentActivity;
 
   static AiAskRequest requestFor({
     required String noteText,
@@ -116,8 +124,9 @@ class AskAboutNoteButton extends StatelessWidget {
         (subheading != null && subheading.trim().isNotEmpty)) {
       return NoteHeadings(
         heading: heading?.trim().isEmpty == true ? null : heading?.trim(),
-        subheading:
-            subheading?.trim().isEmpty == true ? null : subheading?.trim(),
+        subheading: subheading?.trim().isEmpty == true
+            ? null
+            : subheading?.trim(),
       );
     }
     if (note != null) {
@@ -222,10 +231,7 @@ class AskAboutNoteButton extends StatelessWidget {
     if (!context.mounted) {
       return;
     }
-    await AskAboutNoteSheet.show(
-      context,
-      ask: () => ai.askAbout(request),
-    );
+    await AskAboutNoteSheet.show(context, ask: () => ai.askAbout(request));
   }
 
   /// Ask AI entry: choose Ask with your AI or Export / Share note.
@@ -393,9 +399,9 @@ class AskAboutNoteButton extends StatelessWidget {
       if (!context.mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not export note: $error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not export note: $error')));
     }
   }
 
@@ -427,19 +433,21 @@ class AskAboutNoteButton extends StatelessWidget {
     Note? note,
     LibraryDocument? document,
   }) {
-    final text = noteText.trim().isNotEmpty ? noteText.trim() : (note?.text ?? '');
+    final text = noteText.trim().isNotEmpty
+        ? noteText.trim()
+        : (note?.text ?? '');
     final quote = selectedText ?? note?.selection?.text;
     if (note != null) {
       final selection = quote == null || quote.isEmpty
           ? note.selection
           : (note.selection?.copyWith(text: quote) ??
-              NoteSelection(
-                text: quote,
-                left: note.x,
-                top: note.y,
-                right: note.x,
-                bottom: note.y,
-              ));
+                NoteSelection(
+                  text: quote,
+                  left: note.x,
+                  top: note.y,
+                  right: note.x,
+                  bottom: note.y,
+                ));
       return note.copyWith(
         text: text,
         page: page ?? note.page,
@@ -531,27 +539,56 @@ class AskAboutNoteButton extends StatelessWidget {
   }
 
   Future<void> _choose(BuildContext context) {
-    return choose(
-      context,
-      noteText: noteText(),
-      selectedText: selectedText,
-      documentTitle: documentTitle,
-      document: document,
-      page: page,
-      x: x,
-      y: y,
-      colorLabelId: colorLabelId,
-      note: note,
-      notes: notes,
-      offerPdf: offerPdf,
-      loadPdf: loadPdf,
-      pdfFileName: pdfFileName,
-      heading: heading,
-      subheading: subheading,
-      sections: sections,
-      loadSections: loadSections,
-      labels: labels,
-      labelById: labelById,
+    final id = document?.id ?? note?.documentId;
+    final guard = documentActivity;
+    if (guard == null || id == null || id.isEmpty) {
+      return choose(
+        context,
+        noteText: noteText(),
+        selectedText: selectedText,
+        documentTitle: documentTitle,
+        document: document,
+        page: page,
+        x: x,
+        y: y,
+        colorLabelId: colorLabelId,
+        note: note,
+        notes: notes,
+        offerPdf: offerPdf,
+        loadPdf: loadPdf,
+        pdfFileName: pdfFileName,
+        heading: heading,
+        subheading: subheading,
+        sections: sections,
+        loadSections: loadSections,
+        labels: labels,
+        labelById: labelById,
+      );
+    }
+    return guard(
+      id,
+      () => choose(
+        context,
+        noteText: noteText(),
+        selectedText: selectedText,
+        documentTitle: documentTitle,
+        document: document,
+        page: page,
+        x: x,
+        y: y,
+        colorLabelId: colorLabelId,
+        note: note,
+        notes: notes,
+        offerPdf: offerPdf,
+        loadPdf: loadPdf,
+        pdfFileName: pdfFileName,
+        heading: heading,
+        subheading: subheading,
+        sections: sections,
+        loadSections: loadSections,
+        labels: labels,
+        labelById: labelById,
+      ),
     );
   }
 
@@ -561,10 +598,7 @@ class AskAboutNoteButton extends StatelessWidget {
       return TextButton(
         key: const Key('ask-about-note'),
         onPressed: () => _choose(context),
-        child: const Text(
-          'Ask AI',
-          overflow: TextOverflow.ellipsis,
-        ),
+        child: const Text('Ask AI', overflow: TextOverflow.ellipsis),
       );
     }
     return OutlinedButton.icon(
