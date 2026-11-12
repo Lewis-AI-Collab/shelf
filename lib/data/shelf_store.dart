@@ -68,29 +68,36 @@ class ShelfStore extends ChangeNotifier {
     _readingPositions.clear();
     _openedAt.clear();
     lastOpenedDocumentId = null;
-    final states = await _db.loadDocumentStates();
-    DateTime? newest;
-    for (final state in states) {
-      if (_deletedIds.contains(state.documentId)) {
-        continue;
+    try {
+      final states = await _db.loadDocumentStates();
+      DateTime? newest;
+      for (final state in states) {
+        if (_deletedIds.contains(state.documentId)) {
+          continue;
+        }
+        if (documentById(state.documentId) == null) {
+          continue;
+        }
+        final page = state.lastPage;
+        if (page != null && page >= 1) {
+          _readingPositions[state.documentId] = page;
+        }
+        final opened = state.lastOpenedAt;
+        if (opened == null) {
+          continue;
+        }
+        _openedAt[state.documentId] = opened;
+        final currentNewest = newest;
+        if (currentNewest == null || opened.isAfter(currentNewest)) {
+          newest = opened;
+          lastOpenedDocumentId = state.documentId;
+        }
       }
-      if (documentById(state.documentId) == null) {
-        continue;
-      }
-      final page = state.lastPage;
-      if (page != null && page >= 1) {
-        _readingPositions[state.documentId] = page;
-      }
-      final opened = state.lastOpenedAt;
-      if (opened == null) {
-        continue;
-      }
-      _openedAt[state.documentId] = opened;
-      final currentNewest = newest;
-      if (currentNewest == null || opened.isAfter(currentNewest)) {
-        newest = opened;
-        lastOpenedDocumentId = state.documentId;
-      }
+    } on Object {
+      // A missing document_state table must not stop the library from opening.
+      _readingPositions.clear();
+      _openedAt.clear();
+      lastOpenedDocumentId = null;
     }
   }
 
@@ -289,23 +296,30 @@ class ShelfStore extends ChangeNotifier {
       return false;
     }
     _deletedIds.add(id);
-    _readingPositions.remove(id);
-    _openedAt.remove(id);
-    if (openDocumentId == id) {
-      openDocumentId = null;
-    }
-    if (lastOpenedDocumentId == id) {
-      lastOpenedDocumentId = _latestOpenedId();
-    }
-    documents.removeWhere((item) => item.id == id);
-    notes.removeWhere((note) => note.documentId == id);
-    notifyListeners();
     try {
-      await _db.deleteDocumentFiles(document, extraRoots: _pdfCacheRoots());
+      await _db.removeStoredDocument(
+        document,
+        extraRoots: _pdfCacheRoots(),
+        onStored: () {
+          _readingPositions.remove(id);
+          _openedAt.remove(id);
+          if (openDocumentId == id) {
+            openDocumentId = null;
+          }
+          if (lastOpenedDocumentId == id) {
+            lastOpenedDocumentId = _latestOpenedId();
+          }
+          documents.removeWhere((item) => item.id == id);
+          notes.removeWhere((note) => note.documentId == id);
+          notifyListeners();
+        },
+      );
     } on Object {
-      // File cleanup is best-effort; the library row still goes.
+      if (documentById(id) != null) {
+        _deletedIds.remove(id);
+      }
+      return documentById(id) == null;
     }
-    await _db.deleteDocument(id);
     return true;
   }
 

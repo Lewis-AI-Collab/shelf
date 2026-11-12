@@ -148,8 +148,11 @@ void main() {
       const Duration(seconds: 3),
     );
     await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 30)),
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
     );
+    for (var i = 0; i < 6; i++) {
+      await tester.pump();
+    }
   }
 
   Future<void> pumpLibrary(WidgetTester tester) async {
@@ -223,6 +226,89 @@ void main() {
     expect(again.lastOpenedDocumentId, 'pdf-2');
     expect(again.searchNotes(query: 'diagram'), isEmpty);
     expect(again.searchNotes(query: 'field note'), hasLength(1));
+  });
+
+  test('delete matches this id only, not a longer id', () async {
+    for (final id in ['1', '10', 'a1b2', 'a1b2-x']) {
+      await db.upsertDocument(doc(id: id, title: id));
+    }
+    await db.upsertNote(
+      noteFor(
+        id: 'note-ten',
+        documentId: '10',
+        text: 'Keep ten',
+        selected: 'ten',
+      ),
+    );
+    await db.upsertNote(
+      noteFor(
+        id: 'note-long',
+        documentId: 'a1b2-x',
+        text: 'Keep the longer id',
+      ),
+    );
+
+    Future<void> touch(String directory, String name) async {
+      final file = File(p.join(directory, name));
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes([1]);
+    }
+
+    await touch(libraryDir.path, '1.pdf');
+    await touch(libraryDir.path, '1-cover.png');
+    await Directory(p.join(libraryDir.path, '1')).create();
+    await touch(libraryDir.path, '10.pdf');
+    await touch(libraryDir.path, '10-cover.png');
+    await touch(libraryDir.path, '11.pdf');
+    await touch(libraryDir.path, 'a1b2.pdf');
+    await touch(libraryDir.path, 'a1b2-cover.png');
+    await touch(libraryDir.path, 'a1b2-x.pdf');
+    await touch(libraryDir.path, 'a1b2-x-cover.png');
+    await touch(p.join(cacheDir.path, 'covers'), '1.png');
+    await touch(p.join(cacheDir.path, 'covers'), '10.png');
+
+    store = ShelfStore(database: db);
+    await store.init();
+    expect(await store.removeDocument(store.documentById('1')!), isTrue);
+    expect(await store.removeDocument(store.documentById('a1b2')!), isTrue);
+
+    expect(File(p.join(libraryDir.path, '1.pdf')).existsSync(), isFalse);
+    expect(File(p.join(libraryDir.path, '1-cover.png')).existsSync(), isFalse);
+    expect(Directory(p.join(libraryDir.path, '1')).existsSync(), isFalse);
+    expect(
+      File(p.join(cacheDir.path, 'covers', '1.png')).existsSync(),
+      isFalse,
+    );
+    expect(File(p.join(libraryDir.path, 'a1b2.pdf')).existsSync(), isFalse);
+    expect(
+      File(p.join(libraryDir.path, 'a1b2-cover.png')).existsSync(),
+      isFalse,
+    );
+
+    expect(File(p.join(libraryDir.path, '10.pdf')).existsSync(), isTrue);
+    expect(File(p.join(libraryDir.path, '10-cover.png')).existsSync(), isTrue);
+    expect(File(p.join(libraryDir.path, '11.pdf')).existsSync(), isTrue);
+    expect(
+      File(p.join(cacheDir.path, 'covers', '10.png')).existsSync(),
+      isTrue,
+    );
+    expect(File(p.join(libraryDir.path, 'a1b2-x.pdf')).existsSync(), isTrue);
+    expect(
+      File(p.join(libraryDir.path, 'a1b2-x-cover.png')).existsSync(),
+      isTrue,
+    );
+    expect(store.documents.map((item) => item.id).toSet(), {'10', 'a1b2-x'});
+    expect(store.notes.map((note) => note.documentId).toSet(), {
+      '10',
+      'a1b2-x',
+    });
+    expect(
+      store.notes
+          .singleWhere((note) => note.documentId == '10')
+          .selection
+          ?.text,
+      'ten',
+    );
   });
 
   test('missing file still removes the library entry', () async {
@@ -346,6 +432,51 @@ void main() {
     expect(find.text('Field guide'), findsOneWidget);
     expect(File(p.join(libraryDir.path, 'pdf-1.pdf')).existsSync(), isFalse);
     expect(File(p.join(libraryDir.path, 'pdf-2.pdf')).existsSync(), isTrue);
+  });
+
+  testWidgets('swipe Cancel does not dismiss the card', (tester) async {
+    await tester.runAsync(seedStore);
+    await pumpLibrary(tester);
+    final before = tester.getTopLeft(find.text('Notes on method'));
+    await tester.drag(
+      find.byKey(const ValueKey('pdf-1')),
+      const Offset(-240, 0),
+    );
+    await settle(tester);
+    expect(find.text('Delete?'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('library-delete-cancel')));
+    await settle(tester);
+
+    expect(find.text('Delete?'), findsNothing);
+    expect(find.text('Notes on method'), findsOneWidget);
+    expect(find.text('Field guide'), findsOneWidget);
+    final after = tester.getTopLeft(find.text('Notes on method'));
+    expect((after.dx - before.dx).abs(), lessThan(8));
+    expect(store.documents, hasLength(2));
+    expect(File(p.join(libraryDir.path, 'pdf-1.pdf')).existsSync(), isTrue);
+  });
+
+  testWidgets('swipe while an export is in flight does not dismiss the card', (
+    tester,
+  ) async {
+    await tester.runAsync(seedStore);
+    final gate = Completer<void>();
+    final pending = store.withDocumentActivity('pdf-1', () => gate.future);
+    await pumpLibrary(tester);
+    await tester.drag(
+      find.byKey(const ValueKey('pdf-1')),
+      const Offset(-240, 0),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('Delete?'), findsNothing);
+    expect(find.text('Export in progress'), findsOneWidget);
+    expect(find.text('Notes on method'), findsOneWidget);
+    expect(store.documentById('pdf-1'), isNotNull);
+    expect(File(p.join(libraryDir.path, 'pdf-1.pdf')).existsSync(), isTrue);
+    gate.complete();
+    await pending;
   });
 
   testWidgets('deleting the last book shows the empty library', (tester) async {
@@ -490,7 +621,7 @@ void main() {
     const pathChannel = MethodChannel('plugins.flutter.io/path_provider');
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       pathChannel,
-      (call) async => throw PlatformException(code: 'missing'),
+      (call) async => libraryDir.path,
     );
     addTearDown(
       () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -499,14 +630,12 @@ void main() {
       ),
     );
 
-    final pending = plainStore.removeDocument(document);
+    final removed = await tester.runAsync(
+      () => plainStore.removeDocument(document),
+    );
+    expect(removed, isTrue);
     await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
     expect(find.byType(ReaderScreen), findsNothing);
-    expect(find.text('Library home'), findsOneWidget);
-    final removed = await tester.runAsync(() => pending);
-    expect(removed, isTrue);
-    expect(removed, isTrue);
 
     expect(find.byType(ReaderScreen), findsNothing);
     expect(find.text('Library home'), findsOneWidget);

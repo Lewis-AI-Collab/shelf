@@ -206,7 +206,22 @@ class ShelfDatabase {
 
   Future<void> deleteDocument(String id) async {
     final db = await database;
-    await db.transaction((txn) async {
+    await _deleteDocumentRows(db, id);
+  }
+
+  Future<void> removeStoredDocument(
+    LibraryDocument document, {
+    List<Directory> extraRoots = const [],
+    required void Function() onStored,
+  }) async {
+    final db = await database;
+    await _deleteDocumentRows(db, document.id);
+    await deleteDocumentFiles(document, extraRoots: extraRoots);
+    onStored();
+  }
+
+  Future<void> _deleteDocumentRows(Database db, String id) {
+    return db.transaction((txn) async {
       await txn.delete('notes', where: 'document_id = ?', whereArgs: [id]);
       await txn.delete(
         'document_state',
@@ -249,7 +264,7 @@ class ShelfDatabase {
       if (!seen.add(key)) {
         continue;
       }
-      await _purgeDocumentRoot(root, document);
+      _purgeDocumentRoot(root, document);
     }
   }
 
@@ -272,15 +287,12 @@ class ShelfDatabase {
     return roots;
   }
 
-  Future<void> _purgeDocumentRoot(
-    Directory root,
-    LibraryDocument document,
-  ) async {
+  void _purgeDocumentRoot(Directory root, LibraryDocument document) {
     if (!root.existsSync()) {
       return;
     }
-    await _deleteStoredFile(root, document);
-    await _purgeOwned(root, document.id);
+    _deleteStoredFile(root, document);
+    _purgeOwned(root, document.id);
     for (final name in const [
       'covers',
       'thumbs',
@@ -292,22 +304,19 @@ class ShelfDatabase {
       if (!nested.existsSync()) {
         continue;
       }
-      await _purgeOwned(nested, document.id);
+      _purgeOwned(nested, document.id);
     }
   }
 
-  Future<void> _deleteStoredFile(
-    Directory dir,
-    LibraryDocument document,
-  ) async {
+  void _deleteStoredFile(Directory dir, LibraryDocument document) {
     final name = p.basename(document.storedName);
     if (name.isEmpty || name == '.' || name == '..') {
       return;
     }
-    await _deleteFile(File(p.join(dir.path, name)));
+    _deleteFile(File(p.join(dir.path, name)));
   }
 
-  Future<void> _purgeOwned(Directory dir, String id) async {
+  void _purgeOwned(Directory dir, String id) {
     if (id.isEmpty || !dir.existsSync()) {
       return;
     }
@@ -318,9 +327,9 @@ class ShelfDatabase {
       }
       try {
         if (entity is Directory) {
-          await entity.delete(recursive: true);
+          entity.deleteSync(recursive: true);
         } else if (entity is File) {
-          await _deleteFile(entity);
+          _deleteFile(entity);
         }
       } on Object {
         // Best-effort. The library row is still removed.
@@ -328,26 +337,35 @@ class ShelfDatabase {
     }
   }
 
+  static const _artifactExtensions = ['.pdf', '.png', '.jpg', '.jpeg', '.webp'];
+
+  /// Exact names for this id only: `{id}`, `{id}.pdf`, `{id}.png`, `{id}-cover.png`.
+  /// A longer id such as `{id}-x` or `10` when this id is `1` does not match.
   static bool _ownedByDocument(String name, String id) {
-    if (id.isEmpty) {
+    if (id.isEmpty || name.isEmpty) {
       return false;
     }
-    return name == id ||
-        name.startsWith('$id.') ||
-        name.startsWith('$id-') ||
-        name.startsWith('${id}_');
+    if (name == id) {
+      return true;
+    }
+    for (final extension in _artifactExtensions) {
+      if (name == '$id$extension' || name == '$id-cover$extension') {
+        return true;
+      }
+    }
+    return false;
   }
 
-  Future<void> _deleteFile(File file) async {
+  void _deleteFile(File file) {
     try {
       if (!file.existsSync()) {
         return;
       }
-      await file.delete();
+      file.deleteSync();
     } on Object {
       try {
         if (file.existsSync()) {
-          await file.delete();
+          file.deleteSync();
         }
       } on Object {
         // Missing or locked. The library entry still goes.

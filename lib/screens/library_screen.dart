@@ -281,10 +281,19 @@ class LibraryScreen extends StatelessWidget {
                             color: Colors.white,
                           ),
                         ),
-                        confirmDismiss: (_) =>
-                            _confirmDelete(context, document),
-                        onDismissed: (_) {
-                          unawaited(store.removeDocument(document));
+                        confirmDismiss: (_) async {
+                          final confirmed = await _confirmDelete(
+                            context,
+                            document,
+                          );
+                          if (!confirmed || !context.mounted) {
+                            return false;
+                          }
+                          final removed = await store.removeDocument(document);
+                          if (!removed && context.mounted) {
+                            _showDeleteBusy(context);
+                          }
+                          return removed;
                         },
                         child: _LibraryCoverCard(
                           document: document,

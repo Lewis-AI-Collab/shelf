@@ -104,9 +104,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     _closingBecauseDeleted = true;
-    final navigator = Navigator.of(context);
-    if (navigator.canPop()) {
-      navigator.pop();
+    final route = ModalRoute.of(context);
+    if (route != null) {
+      Navigator.of(context).removeRoute(route);
     }
   }
 
