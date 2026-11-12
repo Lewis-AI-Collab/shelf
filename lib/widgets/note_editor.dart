@@ -45,6 +45,7 @@ class NoteEditor extends StatefulWidget {
     this.heading,
     this.subheading,
     this.sections = const [],
+    this.documentActivity,
   });
 
   final List<ColorLabel> labels;
@@ -63,6 +64,7 @@ class NoteEditor extends StatefulWidget {
   final String? heading;
   final String? subheading;
   final List<PdfSection> sections;
+  final DocumentActivityGuard? documentActivity;
 
   static const int composerMaxLines = 4;
 
@@ -84,6 +86,7 @@ class NoteEditor extends StatefulWidget {
     String? heading,
     String? subheading,
     List<PdfSection> sections = const [],
+    DocumentActivityGuard? documentActivity,
   }) {
     return showModalBottomSheet<NoteEditorResult>(
       context: context,
@@ -108,6 +111,7 @@ class NoteEditor extends StatefulWidget {
           heading: heading,
           subheading: subheading,
           sections: sections,
+          documentActivity: documentActivity,
         );
       },
     );
@@ -306,6 +310,7 @@ class _NoteEditorState extends State<NoteEditor> {
             sections: widget.sections,
             note: widget.note,
             labels: widget.labels,
+            documentActivity: widget.documentActivity,
           ),
           const SizedBox(height: 8),
           Row(

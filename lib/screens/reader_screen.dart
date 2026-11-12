@@ -68,14 +68,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void initState() {
     super.initState();
     _openAtPage = NotePageTarget.forNoteOpen(
-      note: widget.focusNoteId == null
-          ? null
-          : _noteById(widget.focusNoteId!),
+      note: widget.focusNoteId == null ? null : _noteById(widget.focusNoteId!),
       fallbackPage: widget.initialPage,
     );
     _page = _openAtPage;
     _pageCount = widget.document.pageCount ?? 1;
     _focusedNoteId = widget.focusNoteId;
+    widget.store.addListener(_onStoreChanged);
+    unawaited(widget.store.noteDocumentOpened(widget.document.id, page: _page));
     if (widget.focusNoteId != null) {
       unawaited(_openFocusedNote(widget.focusNoteId!));
     }
@@ -83,6 +83,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   @override
   void dispose() {
+    widget.store.removeListener(_onStoreChanged);
+    widget.store.noteDocumentClosed(widget.document.id);
     if (!_viewerReady.isCompleted) {
       _viewerReady.complete();
     }
@@ -90,6 +92,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _structureReady.complete();
     }
     super.dispose();
+  }
+
+  var _closingBecauseDeleted = false;
+
+  void _onStoreChanged() {
+    if (_closingBecauseDeleted || !mounted) {
+      return;
+    }
+    if (widget.store.documentById(widget.document.id) != null) {
+      return;
+    }
+    _closingBecauseDeleted = true;
+    final route = ModalRoute.of(context);
+    if (route != null) {
+      Navigator.of(context).removeRoute(route);
+    }
   }
 
   Note? _noteById(String noteId) {
@@ -192,10 +210,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _controller.addListener(tick);
     tick();
     try {
-      await done.future.timeout(
-        const Duration(seconds: 2),
-        onTimeout: () {},
-      );
+      await done.future.timeout(const Duration(seconds: 2), onTimeout: () {});
     } finally {
       _controller.removeListener(tick);
     }
@@ -239,7 +254,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
-  Future<void> _onViewerReady(PdfDocument document, PdfViewerController controller) async {
+  Future<void> _onViewerReady(
+    PdfDocument document,
+    PdfViewerController controller,
+  ) async {
     if (!mounted) {
       return;
     }
@@ -248,11 +266,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _pageCount = document.pages.length;
       _page = controller.pageNumber ?? _page;
     });
+    unawaited(widget.store.noteReadingPosition(widget.document.id, _page));
     if (!_viewerReady.isCompleted) {
       _viewerReady.complete();
     }
     unawaited(_loadStructure(document));
-    await widget.store.updatePageCount(widget.document.id, document.pages.length);
+    await widget.store.updatePageCount(
+      widget.document.id,
+      document.pages.length,
+    );
     // Notes-hub focus owns goToPage so it cannot race the editor.
     if (widget.focusNoteId != null) {
       return;
@@ -381,7 +403,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Re-enable pdfrx handles only after the menu, then select the word
   /// captured at long-press (not a free-drag grey box).
   Future<void> _beginSelectText(Offset globalPosition) async {
-    final pending = _selectHandoff.pendingDocumentPoint ??
+    final pending =
+        _selectHandoff.pendingDocumentPoint ??
         (_controller.isReady
             ? _controller.globalToDocument(globalPosition)
             : null);
@@ -397,7 +420,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (!mounted || !_controller.isReady) {
       return;
     }
-    final documentPosition = _selectHandoff.pendingDocumentPoint ??
+    final documentPosition =
+        _selectHandoff.pendingDocumentPoint ??
         _controller.globalToDocument(globalPosition);
     if (documentPosition == null) {
       return;
@@ -490,9 +514,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (hit == null || hit.page.width == 0 || hit.page.height == 0) {
       return;
     }
-    final x = selection?.anchorX ??
+    final x =
+        selection?.anchorX ??
         Note.normalizeCoord(hit.offset.x / hit.page.width);
-    final y = selection?.anchorY ??
+    final y =
+        selection?.anchorY ??
         Note.normalizeCoord(1 - (hit.offset.y / hit.page.height));
     await _openComposer(
       page: hit.page.pageNumber,
@@ -577,9 +603,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
       heading: headings.heading,
       subheading: headings.subheading,
       sections: _sections,
-      voiceHint: ready
-          ? 'Orange is selected until you pick another colour.'
-          : 'Voice dictation is limited on simulators and emulators. Type the note, or use a physical phone.',
+      documentActivity: widget.store.withDocumentActivity,
+      voiceHint: ready ? 'Orange is selected until you pick another colour.' : 'Voice dictation is limited on simulators and emulators. Type the note, or use a physical phone.',
     );
     if (result == null || result.delete || result.text.isEmpty) {
       return;
@@ -615,6 +640,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       heading: headings.heading,
       subheading: headings.subheading,
       sections: _sections,
+      documentActivity: widget.store.withDocumentActivity,
     );
     if (result == null) {
       return;
@@ -704,34 +730,40 @@ class _ReaderScreenState extends State<ReaderScreen> {
               if (path == null) {
                 return const Center(child: CircularProgressIndicator());
               }
-                    // Orange canvas fill + compact orange handles. The system
-                    // selection toolbar was the empty dark callout — keep it off.
-                    return PdfSelectionChrome.wrap(
-                      PdfViewer.file(
-                        path,
-                        key: ValueKey('pdf-${widget.document.id}'),
-                        controller: _controller,
-                        initialPageNumber: _openAtPage,
-                        params: PdfViewerParams(
-                          backgroundColor: ShelfColors.white,
-                          onGeneralTap: _onViewerTap,
-                          // Selection is off until Select text, so long-press is ours.
-                          textSelectionParams: PdfTextSelectionParams(
-                            enabled: _selectionEnabled,
-                            enableSelectionHandles: true,
-                            showContextMenuAutomatically: false,
-                            onTextSelectionChange: _onTextSelectionChange,
-                            buildSelectionHandle: PdfSelectionChrome.buildHandle,
-                            magnifier: PdfViewerSelectionMagnifierParams(
-                              enabled: false,
-                              shouldShowMagnifier: () => false,
-                            ),
-                          ),
-                          buildContextMenu: PdfSelectionChrome.hideContextMenu,
+              // Orange canvas fill + compact orange handles. The system
+              // selection toolbar was the empty dark callout — keep it off.
+              return PdfSelectionChrome.wrap(
+                PdfViewer.file(
+                  path,
+                  key: ValueKey('pdf-${widget.document.id}'),
+                  controller: _controller,
+                  initialPageNumber: _openAtPage,
+                  params: PdfViewerParams(
+                    backgroundColor: ShelfColors.white,
+                    onGeneralTap: _onViewerTap,
+                    // Selection is off until Select text, so long-press is ours.
+                    textSelectionParams: PdfTextSelectionParams(
+                      enabled: _selectionEnabled,
+                      enableSelectionHandles: true,
+                      showContextMenuAutomatically: false,
+                      onTextSelectionChange: _onTextSelectionChange,
+                      buildSelectionHandle: PdfSelectionChrome.buildHandle,
+                      magnifier: PdfViewerSelectionMagnifierParams(
+                        enabled: false,
+                        shouldShowMagnifier: () => false,
+                      ),
+                    ),
+                    buildContextMenu: PdfSelectionChrome.hideContextMenu,
                     onViewerReady: _onViewerReady,
                     onPageChanged: (page) {
                       if (page != null && mounted) {
                         setState(() => _page = page);
+                        unawaited(
+                          widget.store.noteReadingPosition(
+                            widget.document.id,
+                            page,
+                          ),
+                        );
                       }
                     },
                     pageOverlaysBuilder: (context, pageRect, page) {
